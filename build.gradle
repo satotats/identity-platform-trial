@@ -8,28 +8,43 @@
 
 plugins {
     // Apply the org.jetbrains.kotlin.jvm Plugin to add support for Kotlin.
-    id 'org.jetbrains.kotlin.jvm' version '1.5.0'
+    id 'org.jetbrains.kotlin.jvm' version '1.6.0'
 
     // Apply the application plugin to add support for building a CLI application in Java.
     id 'application'
 }
 
 repositories {
-    // Use Maven Central for resolving dependencies.
     mavenCentral()
 }
 
+ext {
+    ktor_version = "1.6.7"
+}
+
+
 dependencies {
-    // Align versions of all Kotlin components
     implementation platform('org.jetbrains.kotlin:kotlin-bom')
 
-    // Use the Kotlin JDK 8 standard library.
     implementation 'org.jetbrains.kotlin:kotlin-stdlib-jdk8'
 
     // firebase
     implementation 'com.google.firebase:firebase-admin:6.11.0'
+
+    // ktor
+    implementation "io.ktor:ktor-server-core:$ktor_version"
+    implementation "io.ktor:ktor-server-netty:$ktor_version"
+    implementation "io.ktor:ktor-auth:$ktor_version"
+    implementation "io.ktor:ktor-auth-jwt:$ktor_version"
+
+    // logging
+    implementation "ch.qos.logback:logback-classic:1.2.5"
+
+    // to create request and handle response, from ktor
+    implementation "io.ktor:ktor-client-cio:$ktor_version"
+    implementation "io.ktor:ktor-client-serialization:$ktor_version"
 }
 
 application {
-    mainClass = 'com.satotats.gip.AppKt'
+    mainClassName = 'io.ktor.server.netty.EngineMain'
 }
