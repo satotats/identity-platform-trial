@@ -15,43 +15,48 @@ import io.ktor.sessions.*
 import org.slf4j.LoggerFactory
 import java.util.concurrent.TimeUnit
 
-val log = LoggerFactory.getLogger("Auth0")
+private val log = LoggerFactory.getLogger("Auth0")
+private val httpClient = HttpClient(CIO) {
+    install(JsonFeature) {
+        serializer = JacksonSerializer()
+    }
+}
+
+private object Auth0Environment {
+    val domain: String = System.getenv("AUTH0_CLIENT_DOMAIN")
+    val clientSecret: String = System.getenv("AUTH0_CLIENT_ID")
+    val clientId: String = System.getenv("AUTH0_CLIENT_SECRET")
+}
 
 @Suppress("unused")
 fun Application.main() {
-    val httpClient = HttpClient(CIO) {
-        install(JsonFeature) {
-            serializer = JacksonSerializer()
-        }
-    }
-
-    val jwkProvider = JwkProviderBuilder(System.getenv("AUTH0_CLIENT_DOMAIN"))
-        .cached(10, 24, TimeUnit.HOURS)
-        .rateLimited(10, 1, TimeUnit.MINUTES)
-        .build()
-
     install(Authentication) {
-        // 使ってない
-        jwt("jwt-auth0") {
-            verifier(jwkProvider, System.getenv("AUTH0_CLIENT_DOMAIN"))
-            validate { credential -> validateCreds(credential) }
-        }
-
-
         oauth("oauth-auth0") {
             urlProvider = { "http://localhost:8080/callback" }
             providerLookup = {
                 OAuthServerSettings.OAuth2ServerSettings(
                     name = "oauth",
-                    authorizeUrl = "https://${System.getenv("AUTH0_CLIENT_DOMAIN")}/authorize",
-                    accessTokenUrl = "https://${System.getenv("AUTH0_CLIENT_DOMAIN")}/oauth/token",
+                    authorizeUrl = "https://${Auth0Environment.domain}/authorize",
+                    accessTokenUrl = "https://${Auth0Environment.domain}/oauth/token",
                     requestMethod = HttpMethod.Post,
-                    clientId = System.getenv("AUTH0_CLIENT_ID"),
-                    clientSecret = System.getenv("AUTH0_CLIENT_SECRET"),
-//                    defaultScopes = listOf("https://www.googleapis.com/auth/userinfo.profile")
+                    clientId = Auth0Environment.clientId,
+                    clientSecret = Auth0Environment.clientSecret,
                 )
             }
             client = httpClient
+        }
+
+        /** このサンプルではjwt featureは未利用。
+         * もし、ログインの結果取得できたtokenを、クライアントがHTTP Headerに詰めてくれるなら、
+         * jwtでの認証も可能…かも(未検証)。 */
+        jwt("jwt-auth0") {
+            val jwkProvider = JwkProviderBuilder(Auth0Environment.domain)
+                .cached(10, 24, TimeUnit.HOURS)
+                .rateLimited(10, 1, TimeUnit.MINUTES)
+                .build()
+
+            verifier(jwkProvider, Auth0Environment.domain)
+            validate { credential -> validateCreds(credential) }
         }
     }
 
@@ -59,53 +64,44 @@ fun Application.main() {
         cookie<UserSession>("user_session")
     }
 
-    routing {
-        authenticate("oauth-auth0") {
-            get("/login") {
-                // Redirects to 'authorizeUrl' automatically
-            }
+    routing { auth0() }
+}
 
-            get("/callback") {
-                val principal: OAuthAccessTokenResponse.OAuth2? = call.principal()
-                log.info(principal?.accessToken)
-//                call.response.headers.append(HttpHeaders.Authorization, "Bearer ${principal?.accessToken.toString()}")
-                call.sessions.set(UserSession(principal?.accessToken.toString()))
-                call.respondRedirect("/hello")
-            }
-
+private fun Route.auth0() {
+    authenticate("oauth-auth0") {
+        get("/login") {
+            // Redirects to 'authorizeUrl' automatically
         }
 
-        get("hello") {
-            val userSession: UserSession? = call.sessions.get<UserSession>()
-            if (userSession != null) {
-                val userInfo: UserInfo = httpClient.get("https://${System.getenv("AUTH0_CLIENT_DOMAIN")}/userinfo") {
-                    headers {
-                        append(HttpHeaders.Authorization, "Bearer ${userSession.token}")
-                    }
+        get("/callback") {
+            val principal: OAuthAccessTokenResponse.OAuth2? = call.principal()
+            call.sessions.set(UserSession(principal?.accessToken.toString()))
+            call.respondRedirect("/hello")
+        }
+
+    }
+
+    get("hello") {
+        val userSession: UserSession? = call.sessions.get<UserSession>()
+        if (userSession != null) {
+            val userInfo: UserInfo = httpClient.get("https://${Auth0Environment.domain}/userinfo") {
+                headers {
+                    append(HttpHeaders.Authorization, "Bearer ${userSession.token}")
                 }
-                call.respond(userInfo.toString())
-            } else {
-                call.respondRedirect("/")
             }
+            call.respond(userInfo.toString())
+        } else {
+            call.respondRedirect("/")
         }
-
-//        authenticate("jwt-auth0") {
-//            get("/hello") {
-//                val principal = call.principal<JWTPrincipal>()
-//                log.info(principal.toString())
-//                if (principal == null) {
-//                    call.respond(":-(")
-//                    return@get
-//                }
-//                principal.payload.getClaim("name").let { name ->
-//                    call.respond("You've successfully logged-in. Hello, $name")
-//                }
-//            }
-//        }
     }
 }
 
-fun validateCreds(credential: JWTCredential): JWTPrincipal? {
+
+data class UserSession(val token: String)
+data class UserInfo(val name: String?)
+
+/** jwtの利用時はここでバリデーションする */
+private fun validateCreds(credential: JWTCredential): JWTPrincipal? {
     val containsAudience = credential.payload.audience.contains(System.getenv("AUDIENCE"))
 
     if (containsAudience) {
@@ -114,7 +110,3 @@ fun validateCreds(credential: JWTCredential): JWTPrincipal? {
 
     return null
 }
-
-data class UserSession(val token: String)
-
-data class UserInfo(val name: String?)
