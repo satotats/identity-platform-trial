@@ -24,13 +24,14 @@ private val httpClient = HttpClient(CIO) {
 
 private object Auth0Environment {
     val domain: String = System.getenv("AUTH0_CLIENT_DOMAIN")
-    val clientSecret: String = System.getenv("AUTH0_CLIENT_ID")
-    val clientId: String = System.getenv("AUTH0_CLIENT_SECRET")
+    val clientSecret: String = System.getenv("AUTH0_CLIENT_SECRET")
+    val clientId: String = System.getenv("AUTH0_CLIENT_ID")
 }
 
 @Suppress("unused")
 fun Application.main() {
     install(Authentication) {
+        /** see https://auth0.com/docs/authorization/protocols/protocol-oauth2 */
         oauth("oauth-auth0") {
             urlProvider = { "http://localhost:8080/callback" }
             providerLookup = {
@@ -41,6 +42,8 @@ fun Application.main() {
                     requestMethod = HttpMethod.Post,
                     clientId = Auth0Environment.clientId,
                     clientSecret = Auth0Environment.clientSecret,
+                    /** explicitly declare the permissions */
+                    defaultScopes = listOf("openid", "profile", "email")
                 )
             }
             client = httpClient
@@ -75,6 +78,7 @@ private fun Route.auth0() {
 
         get("/callback") {
             val principal: OAuthAccessTokenResponse.OAuth2? = call.principal()
+            log.info(principal?.toString())
             call.sessions.set(UserSession(principal?.accessToken.toString()))
             call.respondRedirect("/hello")
         }
@@ -84,12 +88,12 @@ private fun Route.auth0() {
     get("hello") {
         val userSession: UserSession? = call.sessions.get<UserSession>()
         if (userSession != null) {
-            val userInfo: UserInfo = httpClient.get("https://${Auth0Environment.domain}/userinfo") {
+            val userInfo: String = httpClient.get("https://${Auth0Environment.domain}/userinfo") {
                 headers {
                     append(HttpHeaders.Authorization, "Bearer ${userSession.token}")
                 }
             }
-            call.respond(userInfo.toString())
+            call.respond(userInfo)
         } else {
             call.respondRedirect("/")
         }
